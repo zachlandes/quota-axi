@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.30](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.29...quota-axi-v0.1.30) (2026-08-19)
+
+
+### Features
+
+* **providers:** add Linux Cursor CLI credential source ([#2](https://github.com/kunchenguid/quota-axi/issues/2)) ([#98](https://github.com/kunchenguid/quota-axi/issues/98)) ([8c1d99e](https://github.com/kunchenguid/quota-axi/commit/8c1d99e52961384ac9b0ec499851a27bdb5c7401))
+
 ## [0.1.29](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.28...quota-axi-v0.1.29) (2026-08-18)
 
 
