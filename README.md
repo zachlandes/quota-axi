@@ -534,20 +534,20 @@ Any bounding window without usable pace makes the **whole scope** unmeasurable: 
 
 ### Quota enums
 
-| Name                             | Values                                                                       |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| Provider statuses                | `fresh`, `stale`, `unavailable`, `auth_required`, `rate_limited`, or `error` |
-| Provider sources                 | `oauth`, `pi:openai-codex`, `cli-rpc`, `api`, `web`, `cache`, or `unavailable`                  |
-| Current provider adapter sources | `oauth`, `pi:openai-codex`, `cli-rpc`, `api`, `web`, `cache`, and `unavailable`                 |
-| Window kinds                     | `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`             |
-| Window pace statuses             | `ahead`, `on_pace`, `behind`, or `unknown`                                   |
-| Effective pace statuses          | `ahead`, `on_pace`, `behind`, `mixed`, or `unknown`                          |
-| Effective runway statuses        | `exhausted_now`, `projected_exhaustion`, `through_reset`, or `unknown`       |
-| Effective selection statuses     | `known` or `unknown`                                                         |
-| Pace projection confidence       | `early` or `established`                                                     |
-| Pace cycle basis                 | `starts_at_resets_at` or `window_seconds`                                    |
-| Quota relationship statuses      | `known`, `partial`, or `unknown`                                             |
-| Source attempt statuses          | `success`, `failed`, or `skipped`                                            |
+| Name                             | Values                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| Provider statuses                | `fresh`, `stale`, `unavailable`, `auth_required`, `rate_limited`, or `error`    |
+| Provider sources                 | `oauth`, `pi:openai-codex`, `cli-rpc`, `api`, `web`, `cache`, or `unavailable`  |
+| Current provider adapter sources | `oauth`, `pi:openai-codex`, `cli-rpc`, `api`, `web`, `cache`, and `unavailable` |
+| Window kinds                     | `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`                |
+| Window pace statuses             | `ahead`, `on_pace`, `behind`, or `unknown`                                      |
+| Effective pace statuses          | `ahead`, `on_pace`, `behind`, `mixed`, or `unknown`                             |
+| Effective runway statuses        | `exhausted_now`, `projected_exhaustion`, `through_reset`, or `unknown`          |
+| Effective selection statuses     | `known` or `unknown`                                                            |
+| Pace projection confidence       | `early` or `established`                                                        |
+| Pace cycle basis                 | `starts_at_resets_at` or `window_seconds`                                       |
+| Quota relationship statuses      | `known`, `partial`, or `unknown`                                                |
+| Source attempt statuses          | `success`, `failed`, or `skipped`                                               |
 
 Source attempts can include `credentialPresent` when a non-secret probe confirms a credential item exists.
 
@@ -585,9 +585,9 @@ Default model order is deterministic and non-preferential: provider, then model 
 
 Auth source entries can include `credentialPresent` when a non-secret probe confirms a credential item exists.
 
-| Name                 | Values                                                                                                                                                                                          |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth source statuses | `available`, `missing`, `invalid`, `expired`, `skipped`, or `error`                                                                                                                             |
+| Name                 | Values                                                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Auth source statuses | `available`, `missing`, `invalid`, `expired`, `skipped`, or `error`                                                                                                                                                |
 | Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, `cli-keychain`, `cli-authfile`, `cli-rpc`, `pi:openai-codex`, `pi:kimi-coding`, `pi:xai`, `kimi-code-cli`, and `opencode:auth.json` |
 
 ## Security Posture
@@ -597,7 +597,7 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 | Provider       | Credential sources read                                                                                                                                                                                                                                                                                                                                                                                                        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls                                                                                           |
-| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json`, then Pi's `$PI_CODING_AGENT_DIR/auth.json` `openai-codex` subscription OAuth entry (default `~/.pi/agent/auth.json`), before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                                                                                                              |
+| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json`, then Pi's `$PI_CODING_AGENT_DIR/auth.json` `openai-codex` subscription OAuth entry (default `~/.pi/agent/auth.json`), before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                       |
 | Cursor         | Cursor editor: `$CURSOR_STATE_DB` when set or the platform Cursor state database path. Cursor CLI (`cursor-agent`), macOS: identity from `$CURSOR_CLI_CONFIG` or `~/.cursor/cli-config.json` plus the `cursor-access-token` / `cursor-user` Keychain value with `--allow-keychain-prompt` or an account-scoped marker; Linux: only `accessToken` from `$CURSOR_CLI_CONFIG` or `${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json` |
 | GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                                                                                                                       |
 | Grok           | Grok CLI session auth from `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`, plus Pi's independent `$PI_CODING_AGENT_DIR/auth.json` `xai` entry (default `~/.pi/agent/auth.json`) for OAuth or literal API-key model auth                                                                                                                                            |

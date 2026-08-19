@@ -110,6 +110,12 @@ async function fetchQuotaWithDependencies(
 ): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [];
   let finalError = "Codex quota unavailable";
+  // False once a source has recorded a real failure. Sources are consulted in
+  // priority order, so a lower-priority one may only name the failure while
+  // this still holds: a native probe that timed out has already explained the
+  // run, and letting an expired Pi entry restate it as an auth problem would
+  // make statusFromError advise a sign-in for what is a network outage.
+  let errorIsDefault = true;
   let retryAfter: string | undefined;
 
   const credentialState = readCredentialState();
@@ -135,6 +141,7 @@ async function fetchQuotaWithDependencies(
         error,
         credentialState.credentials.accessToken,
       );
+      errorIsDefault = false;
       attempts[attempts.length - 1] = {
         source: "oauth",
         status: "failed",
@@ -150,6 +157,7 @@ async function fetchQuotaWithDependencies(
     });
     if (credentialState.status !== "missing") {
       finalError = "Codex sign-in required";
+      errorIsDefault = false;
     }
   }
 
@@ -195,23 +203,26 @@ async function fetchQuotaWithDependencies(
       };
       if (error instanceof RateLimitError) {
         finalError = message;
+        errorIsDefault = false;
         retryAfter = error.retryAfter;
       } else if (!retryAfter) {
         finalError = message;
+        errorIsDefault = false;
       }
     }
   } else {
     attempts.push(piCredentialAttempt(piResolution));
-    if (!retryAfter && piResolution.status === "expired") {
-      finalError = "Pi Codex access token expired";
-    } else if (!retryAfter && piResolution.status === "error") {
-      finalError = "Codex Pi credential resolution failed";
-    } else if (
-      !retryAfter &&
-      finalError === "Codex quota unavailable" &&
-      piResolution.status !== "missing"
-    ) {
-      finalError = "Codex sign-in required";
+    if (!retryAfter && errorIsDefault) {
+      if (piResolution.status === "expired") {
+        finalError = "Pi Codex access token expired";
+        errorIsDefault = false;
+      } else if (piResolution.status === "error") {
+        finalError = "Codex Pi credential resolution failed";
+        errorIsDefault = false;
+      } else if (piResolution.status !== "missing") {
+        finalError = "Codex sign-in required";
+        errorIsDefault = false;
+      }
     }
   }
 
@@ -238,8 +249,11 @@ async function fetchQuotaWithDependencies(
       status: "failed",
       error: message,
     };
-    finalError =
-      finalError === "Codex quota unavailable" ? message : finalError;
+    // cli-rpc is the last source, so this deliberately does not clear
+    // errorIsDefault. Add a source after it and the flag has to be cleared here.
+    if (errorIsDefault) {
+      finalError = message;
+    }
   }
 
   const cached = readCachedProvider("codex");

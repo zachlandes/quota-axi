@@ -433,6 +433,88 @@ describe("Codex credential-state reporting", () => {
     ]);
   });
 
+  it("keeps a transient native probe failure over an expired Pi credential", async () => {
+    const nativeToken = jwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
+    writeAuth({ tokens: { access_token: nativeToken } });
+    writePiAuth(
+      piOauthEntry({
+        access: "expired-pi-access-token",
+        expires: Date.now() - 1,
+      }),
+    );
+    const timeout = () => {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      return error;
+    };
+    const fetchMock = vi.fn(async () => {
+      throw timeout();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    // The native credential was never rejected - the network was. Advising a
+    // sign-in here sends the reader to fix a credential that is fine.
+    expect(result.state.status).toBe("error");
+    expect(result.state.error).toBe("Codex quota request timed out");
+    expect(result.state.status).not.toBe("auth_required");
+    expect(result.attempts).toEqual([
+      {
+        source: "oauth",
+        status: "failed",
+        error: "Codex quota request timed out",
+      },
+      {
+        source: "pi:openai-codex",
+        status: "skipped",
+        error: "credentials_expired_refreshable",
+        credentialPresent: true,
+      },
+      { source: "cli-rpc", status: "failed", error: expect.any(String) },
+    ]);
+  });
+
+  it("keeps an unusable native credential over an expired Pi credential", async () => {
+    writeAuth({ tokens: { access_token: jwt({ exp: 1 }) } });
+    writePiAuth(
+      piOauthEntry({
+        access: "expired-pi-access-token",
+        expires: Date.now() - 1,
+      }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.error).toBe("Codex sign-in required");
+    expect(result.state.status).toBe("auth_required");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still names the expired Pi credential when no native credential exists", async () => {
+    writePiAuth(
+      piOauthEntry({
+        access: "expired-pi-access-token",
+        expires: Date.now() - 1,
+      }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    // The guard above must not silence the diagnostic that is genuinely the
+    // best explanation available.
+    expect(result.state.error).toBe("Pi Codex access token expired");
+    expect(result.state.status).toBe("auth_required");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps CLI RPC as the final fallback after both file sources", async () => {
     const binary = join(tempDir!, "codex-fixture");
     process.env.QUOTA_AXI_CODEX_BINARY = binary;
