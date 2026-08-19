@@ -211,7 +211,6 @@ describe("quota cache", () => {
       pace: {
         status: "ahead",
         reservePercentPoints: -20,
-        projectionBasis: "cycle_average",
       },
     };
 

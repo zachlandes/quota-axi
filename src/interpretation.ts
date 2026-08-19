@@ -1,4 +1,9 @@
-import { computeWindowPace, summarizeEffectivePace } from "./pace.js";
+import {
+  computeEffectiveRunway,
+  computeWindowPace,
+  summarizeEffectivePace,
+  summarizeEffectiveSelection,
+} from "./pace.js";
 import type {
   EffectiveAvailability,
   ProviderQuota,
@@ -17,7 +22,7 @@ export function withQuotaSemantics(
     }),
   }));
   const withWindows = { ...provider, windows };
-  const semantics = semanticsFor(withWindows);
+  const semantics = semanticsFor(withWindows, generatedAt);
   return {
     ...withWindows,
     quotaSemantics: provider.state.stale
@@ -36,6 +41,14 @@ function staleSemantics(semantics: QuotaSemantics): QuotaSemantics {
         scope,
         status: "unknown",
         boundedBy,
+        runway: {
+          status: "unknown" as const,
+          ...(boundedBy.length > 0 ? { unmeasurableWindowIds: boundedBy } : {}),
+        },
+        selection: {
+          status: "unknown" as const,
+          ...(boundedBy.length > 0 ? { unmeasurableWindowIds: boundedBy } : {}),
+        },
         ...(pace
           ? {
               pace: {
@@ -63,29 +76,43 @@ function staleSemantics(semantics: QuotaSemantics): QuotaSemantics {
   };
 }
 
-function semanticsFor(provider: ProviderQuota): QuotaSemantics {
+function semanticsFor(
+  provider: ProviderQuota,
+  generatedAt: string,
+): QuotaSemantics {
   switch (provider.provider) {
     case "claude":
-      return claudeSemantics(provider.windows);
+      return claudeSemantics(provider.windows, generatedAt);
     case "codex":
-      return codexSemantics(provider.windows);
+      return codexSemantics(provider.windows, generatedAt);
     case "grok":
-      return grokSemantics(provider.windows);
+      return grokSemantics(provider.windows, generatedAt);
     case "kimi":
       return kimiSemantics(
         provider.windows,
         provider.state.untrustedWindowIds ?? [],
+        generatedAt,
+      );
+    case "zai":
+      return zaiSemantics(
+        provider.windows,
+        provider.state.untrustedWindowIds ?? [],
+        generatedAt,
       );
     case "cursor":
+      return cursorSemantics(provider.windows, generatedAt);
     case "copilot":
       return unknownSemantics(
         provider.windows,
-        `quota-axi does not know whether ${provider.label}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
+        `quota-axi does not know whether ${provider.label ?? provider.provider}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
       );
   }
 }
 
-function claudeSemantics(windows: QuotaWindow[]): QuotaSemantics {
+function claudeSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
   const account = windows.filter(({ id }) =>
     ["five_hour", "seven_day"].includes(id),
   );
@@ -104,10 +131,14 @@ function claudeSemantics(windows: QuotaWindow[]): QuotaSemantics {
 
   const effectiveAvailability: EffectiveAvailability[] = [];
   if (account.length > 0) {
-    effectiveAvailability.push(availability("all_models", account));
+    effectiveAvailability.push(
+      availability("all_models", account, generatedAt),
+    );
   }
   for (const model of models) {
-    effectiveAvailability.push(availability(model.id, [...account, model]));
+    effectiveAvailability.push(
+      availability(model.id, [...account, model], generatedAt),
+    );
   }
   return knownSemantics(
     effectiveAvailability,
@@ -115,7 +146,10 @@ function claudeSemantics(windows: QuotaWindow[]): QuotaSemantics {
   );
 }
 
-function codexSemantics(windows: QuotaWindow[]): QuotaSemantics {
+function codexSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
   const account = windows.filter(isCodexAccountWindow);
   const codeReview = windows.filter(
     ({ id }) =>
@@ -142,14 +176,18 @@ function codexSemantics(windows: QuotaWindow[]): QuotaSemantics {
 
   const effectiveAvailability: EffectiveAvailability[] = [];
   if (account.length > 0) {
-    effectiveAvailability.push(availability("all_models", account));
+    effectiveAvailability.push(
+      availability("all_models", account, generatedAt),
+    );
   }
   if (codeReview.length > 0) {
-    effectiveAvailability.push(availability("code_review", codeReview));
+    effectiveAvailability.push(
+      availability("code_review", codeReview, generatedAt),
+    );
   }
   for (const [scope, modelWindows] of models) {
     effectiveAvailability.push(
-      availability(scope, [...account, ...modelWindows]),
+      availability(scope, [...account, ...modelWindows], generatedAt),
     );
   }
   return knownSemantics(
@@ -158,7 +196,10 @@ function codexSemantics(windows: QuotaWindow[]): QuotaSemantics {
   );
 }
 
-function grokSemantics(windows: QuotaWindow[]): QuotaSemantics {
+function grokSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
   const shared = windows.filter(({ id }) => id === "credits");
   const products = windows.filter(({ id }) => id.startsWith("product:"));
   const unresolved = windows.filter(
@@ -173,10 +214,14 @@ function grokSemantics(windows: QuotaWindow[]): QuotaSemantics {
 
   const effectiveAvailability: EffectiveAvailability[] = [];
   if (shared.length > 0) {
-    effectiveAvailability.push(availability("all_products", shared));
+    effectiveAvailability.push(
+      availability("all_products", shared, generatedAt),
+    );
   }
   for (const product of products) {
-    effectiveAvailability.push(availability(product.id, [...shared, product]));
+    effectiveAvailability.push(
+      availability(product.id, [...shared, product], generatedAt),
+    );
   }
   return knownSemantics(
     effectiveAvailability,
@@ -187,6 +232,7 @@ function grokSemantics(windows: QuotaWindow[]): QuotaSemantics {
 function kimiSemantics(
   windows: QuotaWindow[],
   untrustedWindowIds: string[],
+  generatedAt: string,
 ): QuotaSemantics {
   const unresolved = windows.filter(
     ({ id }) => id !== "weekly" && id !== "five_hour",
@@ -205,37 +251,174 @@ function kimiSemantics(
       effectiveAvailability:
         recognized.length > 0
           ? [
-              {
-                scope: "all_models",
-                status: "unknown",
-                boundedBy: recognized.map(({ id }) => id),
-                pace: summarizeEffectivePace(recognized),
-              },
+              unresolvedAvailability(
+                "all_models",
+                recognized,
+                unresolvedWindowIds,
+              ),
             ]
           : [],
       unresolvedWindowIds,
     };
   }
   const effectiveAvailability =
-    windows.length > 0 ? [availability("all_models", windows)] : [];
+    windows.length > 0
+      ? [availability("all_models", windows, generatedAt)]
+      : [];
   return knownSemantics(
     effectiveAvailability,
     "Kimi's weekly and five-hour account windows jointly bound every model, so effective remaining is the minimum across the named windows.",
   );
 }
 
+/**
+ * Cursor's recognized windows all draw on the same plan billing cycle, so
+ * quota-axi treats them as jointly bounding rather than independent. That is
+ * the conservative reading: the effective remaining is the minimum across them,
+ * which never overstates headroom even if a window later turns out to be
+ * independent.
+ */
+const CURSOR_RECOGNIZED_WINDOW_IDS = [
+  "included_usage",
+  "auto_usage",
+  "api_usage",
+  "spend_limit",
+];
+
+function cursorSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const recognized = windows.filter(({ id }) =>
+    CURSOR_RECOGNIZED_WINDOW_IDS.includes(id),
+  );
+  const unresolved = windows.filter(
+    ({ id }) => !CURSOR_RECOGNIZED_WINDOW_IDS.includes(id),
+  );
+  const effectiveAvailability =
+    recognized.length > 0
+      ? [availability("all_models", recognized, generatedAt)]
+      : [];
+  if (unresolved.length > 0) {
+    return {
+      status: "partial",
+      description:
+        "Cursor's included, auto, API usage, and spend-limit windows jointly bound every model, so effective remaining is the minimum across those named windows. Unfamiliar windows are not folded into that bound, so they stay unresolved.",
+      effectiveAvailability,
+      unresolvedWindowIds: unresolved.map(({ id }) => id),
+    };
+  }
+  return knownSemantics(
+    effectiveAvailability,
+    "Cursor's included, auto, API usage, and spend-limit windows jointly bound every model, so effective remaining is the minimum across the named windows.",
+  );
+}
+
+function zaiSemantics(
+  windows: QuotaWindow[],
+  untrustedWindowIds: string[],
+  generatedAt: string,
+): QuotaSemantics {
+  const token = windows.filter(
+    ({ id }) => id === "five_hour" || id === "weekly",
+  );
+  const tool = windows.filter(({ id }) => id === "mcp_month");
+  const recognized = new Set([...token, ...tool]);
+  const unresolved = windows.filter((window) => !recognized.has(window));
+  const unresolvedWindowIds = [
+    ...new Set([...unresolved.map(({ id }) => id), ...untrustedWindowIds]),
+  ];
+  if (unresolvedWindowIds.length > 0) {
+    const effectiveAvailability: EffectiveAvailability[] = [];
+    if (token.length > 0) {
+      effectiveAvailability.push(
+        unresolvedAvailability("all_models", token, unresolvedWindowIds),
+      );
+    }
+    if (tool.length > 0) {
+      effectiveAvailability.push(
+        unresolvedAvailability("tools", tool, unresolvedWindowIds),
+      );
+    }
+    return {
+      status: "partial",
+      description:
+        "Z.AI's five-hour and weekly token windows jointly bound model usage and the monthly tool window is a separate resource, but unfamiliar windows prevent a definitive effective percentage.",
+      effectiveAvailability,
+      unresolvedWindowIds,
+    };
+  }
+
+  const effectiveAvailability: EffectiveAvailability[] = [];
+  if (token.length > 0) {
+    effectiveAvailability.push(availability("all_models", token, generatedAt));
+  }
+  if (tool.length > 0) {
+    effectiveAvailability.push(availability("tools", tool, generatedAt));
+  }
+  return knownSemantics(
+    effectiveAvailability,
+    "Z.AI's five-hour and weekly token windows jointly bound model usage, so effective remaining is the minimum across the named windows. The monthly tool window is an independent resource.",
+  );
+}
+
+/**
+ * Report a scope whose recognized windows are real bounds while unfamiliar
+ * windows may add further bounds, so the effective percentage stays unknown and
+ * every window that could bind the scope is named as unmeasurable.
+ *
+ * @param scope effective-availability scope name
+ * @param windows recognized windows bounding this scope only
+ * @param unresolvedWindowIds windows quota-axi could not place
+ * @returns non-definitive availability entry for the scope
+ */
+function unresolvedAvailability(
+  scope: string,
+  windows: QuotaWindow[],
+  unresolvedWindowIds: string[],
+): EffectiveAvailability {
+  const boundedBy = windows.map(({ id }) => id);
+  const unmeasurableWindowIds = [...boundedBy, ...unresolvedWindowIds];
+  return {
+    scope,
+    status: "unknown",
+    boundedBy,
+    pace: summarizeEffectivePace(windows),
+    runway: {
+      status: "unknown",
+      unmeasurableWindowIds,
+    },
+    // Unrecognized limits may add bounds this scope cannot see, so the
+    // selection scalar would be computed over an incomplete bound set.
+    // Report it unmeasurable rather than optimistic.
+    selection: {
+      status: "unknown",
+      unmeasurableWindowIds,
+    },
+  };
+}
+
 function availability(
   scope: string,
   windows: QuotaWindow[],
+  generatedAt: string,
 ): EffectiveAvailability {
   const boundedBy = windows.map(({ id }) => id);
   const remaining = windows.map(({ percentRemaining }) => percentRemaining);
   const pace = summarizeEffectivePace(windows);
+  const selection = summarizeEffectiveSelection(windows);
   if (
     remaining.length === 0 ||
     remaining.some((value) => value === undefined)
   ) {
-    return { scope, status: "unknown", boundedBy, pace };
+    return {
+      scope,
+      status: "unknown",
+      boundedBy,
+      pace,
+      runway: computeEffectiveRunway(windows, generatedAt),
+      selection,
+    };
   }
   const effectivePercentRemaining = Math.min(...(remaining as number[]));
   return {
@@ -250,6 +433,8 @@ function availability(
       )
       .map(({ id }) => id),
     pace,
+    runway: computeEffectiveRunway(windows, generatedAt),
+    selection,
   };
 }
 

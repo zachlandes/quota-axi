@@ -4,7 +4,8 @@ export type ProviderId =
   | "cursor"
   | "copilot"
   | "grok"
-  | "kimi";
+  | "kimi"
+  | "zai";
 
 export const PROVIDER_IDS = [
   "claude",
@@ -13,6 +14,7 @@ export const PROVIDER_IDS = [
   "copilot",
   "grok",
   "kimi",
+  "zai",
 ] as const satisfies readonly ProviderId[];
 
 export type ProviderSource =
@@ -72,10 +74,32 @@ export type QuotaPace = {
   /** Linear cycle-average exhaustion timestamp when defined. */
   projectedExhaustedAt?: string;
   projectionConfidence?: "early" | "established";
-  /** Currently cycle-average; reserved for future bases. */
-  projectionBasis?: "cycle_average";
   cycleBasis?: "starts_at_resets_at" | "window_seconds";
   cycleSeconds?: number;
+};
+
+export type EffectiveRunway = {
+  /**
+   * `through_reset` means every authoritative bounding window's current-cycle
+   * observation reaches its own reset before exhaustion. It is not a finite
+   * exhaustion deadline. `unknown` preserves uncertainty rather than deriving
+   * a synthetic scope reset from windows with different cycles.
+   */
+  status:
+    | "exhausted_now"
+    | "projected_exhaustion"
+    | "through_reset"
+    | "unknown";
+  /** Present for `exhausted_now` and `projected_exhaustion`, never negative. */
+  usableRunwaySeconds?: number;
+  /** Present for a finite exhaustion result when the snapshot clock is valid. */
+  projectedExhaustedAt?: string;
+  /** The authoritative bound responsible for a finite effective result. */
+  limitingWindowId?: string;
+  /** Present for cycle-average projected results, including `through_reset`. */
+  projectionConfidence?: "early" | "established";
+  /** Bounds that prevent a sound aggregate conclusion when status is `unknown`. */
+  unmeasurableWindowIds?: string[];
 };
 
 export type EffectivePaceSummary = {
@@ -91,6 +115,39 @@ export type EffectivePaceSummary = {
   unknownWindowIds?: string[];
   worstReservePercentPoints?: number;
   worstReserveWindowId?: string;
+};
+
+/**
+ * Published field name of the per-scope selection scalar. Declared once so the
+ * scalar can be renamed in a single line without touching call sites.
+ */
+export const SELECTION_SCALAR_KEY = "spendPriority";
+
+/**
+ * Advisory per-scope selection data derived only from already-reported windows.
+ *
+ * When `status` is `known`, the scalar keyed by `SELECTION_SCALAR_KEY` is the
+ * cycle-weighted mean, across the scope's bounding windows, of
+ * `percentRemaining / timeRemainingPercent - burnMultiple`, clamped to
+ * [-100, 100]. Each term is the percentage points of paid allowance projected
+ * to reach reset unused, expressed per point of remaining cycle time. Positive
+ * means the scope is on track to forfeit allowance, `0` is exact utilization,
+ * and negative means it is overdrawn against the reset clock. At
+ * `burnMultiple` 1 each term reduces to the window's `reservePercentPoints`
+ * over the same denominator.
+ *
+ * It is comparative data, not a ranking, an ordering, or a recommendation, and
+ * it never supersedes `runway` as the completion-risk gate.
+ */
+export type EffectiveSelection = Partial<
+  Record<typeof SELECTION_SCALAR_KEY, number>
+> & {
+  status: "known" | "unknown";
+  /**
+   * Bounding windows whose pace is unknown or unusable. Any such window makes
+   * the whole scope unmeasurable and suppresses the scalar.
+   */
+  unmeasurableWindowIds?: string[];
 };
 
 export type QuotaWindow = {
@@ -117,11 +174,23 @@ export type EffectiveAvailability = {
   limitingWindowIds?: string[];
   /** Compact pace over every bounding window, not only the current limiter. */
   pace?: EffectivePaceSummary;
+  /**
+   * Effective usable runway across every authoritative bounding window, derived
+   * from this report's single generatedAt clock. Not cached.
+   */
+  runway?: EffectiveRunway;
+  /**
+   * Advisory comparative selection data for this scope. Published as data for a
+   * consumer to compare scopes and accounts itself; quota-axi never ranks or
+   * routes. Not cached.
+   */
+  selection?: EffectiveSelection;
 };
 
 export type QuotaSemantics = {
   status: "known" | "partial" | "unknown";
-  description: string;
+  /** Fixed per-provider prose. Omitted from default `--json`; see `--full`. */
+  description?: string;
   effectiveAvailability: EffectiveAvailability[];
   unresolvedWindowIds?: string[];
 };
@@ -135,8 +204,10 @@ export type SourceAttempt = {
 
 export type ProviderQuota = {
   provider: ProviderId;
-  label: string;
-  source: ProviderSource;
+  /** Display name. Omitted from default `--json`; see `--full`. */
+  label?: string;
+  /** Report provenance. Omitted from default `--json`; see `--full`. */
+  source?: ProviderSource;
   plan?: string;
   account?: {
     email?: string;
@@ -166,14 +237,15 @@ export type ProviderQuota = {
     reason?: ProviderStateReason;
     remedyCommand?: string;
     untrustedWindowIds?: string[];
-    sourcesTried: string[];
+    /** Omitted from default `--json`; see `--full`. */
+    sourcesTried?: string[];
   };
   attempts?: SourceAttempt[];
 };
 
 export type QuotaAxiResponse = {
   generatedAt: string;
-  schemaVersion: 3;
+  schemaVersion: 5;
   providers: ProviderQuota[];
   help?: string[];
 };
@@ -200,4 +272,66 @@ export type AuthSourceReport = {
 export type AuthProviderReport = {
   provider: ProviderId;
   sources: AuthSourceReport[];
+};
+
+/** A coarse editorial classification relative to the current model frontier. */
+export type IntelligenceBucket = "high" | "medium" | "low";
+
+/** Native-provider model knowledge used by the `models` evidence join. */
+export type ModelCatalogEntry = {
+  provider: "claude" | "codex" | "grok" | "kimi";
+  id: string;
+  label: string;
+  intelligence: IntelligenceBucket;
+  /** Known model-scoped quota window IDs, without period suffixes. */
+  windowIds?: string[];
+  /** Human-facing or provider naming aliases, never launch identifiers. */
+  aliases?: string[];
+  notes?: string;
+};
+
+export type ModelCatalog = {
+  /** ISO calendar date for this reviewed catalog snapshot. */
+  version: string;
+  provenance: string;
+  entries: ModelCatalogEntry[];
+};
+
+export type ProviderStateSummary = Pick<
+  ProviderQuota["state"],
+  "status" | "stale" | "authStatus" | "reason" | "remedyCommand"
+>;
+
+export type ModelQuotaRecord = {
+  provider: ModelCatalogEntry["provider"];
+  id: string;
+  label: string;
+  intelligence: IntelligenceBucket;
+  /** The effective availability scope used as evidence for this row. */
+  quotaScopes: string[];
+  /** Omitted when quota relationships are unavailable or unknown. */
+  effective?: EffectiveAvailability;
+  state: ProviderStateSummary;
+};
+
+export type ModelReference = Pick<ModelQuotaRecord, "provider" | "id">;
+
+/** Opt-in ordering keys. Future keys require their own evidence and docs. */
+export type ModelSortKey = "runway";
+
+export type ModelSortResult = {
+  key: ModelSortKey;
+  /** Groups with equal comparator evidence, never hidden behind array order. */
+  tieGroups: ModelReference[][];
+};
+
+export type ModelsResponse = {
+  generatedAt: string;
+  schemaVersion: 1;
+  catalog: Pick<ModelCatalog, "version" | "provenance">;
+  models: ModelQuotaRecord[];
+  /** Provider/model window scopes with no corresponding catalog entry. */
+  unmatchedWindowIds?: string[];
+  /** Present only when an explicit comparator was requested. */
+  sort?: ModelSortResult;
 };
